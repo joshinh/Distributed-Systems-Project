@@ -1,0 +1,9 @@
+
+17th Nov
+
+How can we simulate the pretrainig without requiring exorbitant amount of compute?
+--- There are two options i think:
+1. Pretrain transformers using MLM on very small dataset. The advantage of this is that we'll be able to fully isolate the effects of synchronous vs asynchornous SGD since they are used to train a model from scratch. The downside of this approach is that if the model is pretrained on a very small dataset, the effect of pretraining on the downstream task will be minimal, maybe giving unnoticalable differences between the two distributed optimization methods.
+2. Use STILT (i.e. continue pretraining) as a proxy for pretrainig. Again we can use small datasets here which is good for faster experiments. Another advantage is that the net effect of pretraining will still be large on the downstream task, so maybe we can see more clear differences. But one important caveat here is that the two different distributed optimization algorithms will only be applied for a very small fraction of the pretraining, which again risks giving similar models.
+
+Considering all the pros and cons, I think it is better to go with option 2. Firstly, that has been reliably used in the literature before. Second the fine-tuned models with option 2 will be much better performing & useful i.e. closer to actual SOTA. Therefore whatever analysis I do in this project will at least be somewhat useful practically. The first option beards the risk of the analysis being completely useless.
