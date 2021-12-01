@@ -65,7 +65,11 @@ def evaluate(args, model, eval_dataset):
         batch.to(device)
         model.eval()
         outputs = model(**batch)
-        eval_loss += outputs['loss'].item()
+        if args.n_gpu > 1:
+            tmp_loss = outputs['loss'].mean()
+        else:
+            tmp_loss = outputs['loss']
+        eval_loss += tmp_loss.item()
         
     return eval_loss
 
