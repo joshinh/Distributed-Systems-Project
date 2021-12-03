@@ -1,3 +1,7 @@
+import time
+
+start_time = time.time()
+
 import os
 os.environ['TRANSFORMERS_CACHE'] = '/scratch/nhj4247/python_cache/'
 
@@ -16,8 +20,9 @@ import torch.multiprocessing as mp
 
 
 
-def evaluate(args, model, eval_dataset, data_collator, device):
+def evaluate(args, model, eval_dataset, data_collator, device, n_gpu):
     
+    model.to(device)
     eval_dataloader = DataLoader(eval_dataset,
                                  batch_size=args.per_device_eval_batch_size,
                                  sampler=SequentialSampler(eval_dataset),
@@ -29,7 +34,7 @@ def evaluate(args, model, eval_dataset, data_collator, device):
         batch.to(device)
         model.eval()
         outputs = model(**batch)
-        if args.n_gpu > 1:
+        if n_gpu > 1:
             tmp_loss = outputs['loss'].mean()
         else:
             tmp_loss = outputs['loss']
@@ -40,11 +45,12 @@ def evaluate(args, model, eval_dataset, data_collator, device):
 
 ## Training loop
 
-def train(args, model, device, train_dataloader, eval_dataset, data_collator):
+def train(args, model, device, train_dataloader, eval_dataset, data_collator, rank, n_gpu):
 
-    print("Number of availabel GPUs: %d" %args.n_gpu)
+    print("Number of availabel GPUs: %d" %n_gpu)
+    torch.cuda.set_device(rank)
 
-    train_batch_size = args.n_gpu * args.per_device_train_batch_size
+    train_batch_size = n_gpu * args.per_device_train_batch_size
 
     t_total = len(train_dataloader) * args.num_train_epochs
 
@@ -57,9 +63,10 @@ def train(args, model, device, train_dataloader, eval_dataset, data_collator):
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total)
 
 
-    if args.n_gpu > 1:
+    if n_gpu > 1:
         model = torch.nn.DataParallel(model)
     
+    print("Local rank is: %d" %args.local_rank)
     if args.local_rank != -1:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank],
                                                       output_device=args.local_rank,
@@ -84,7 +91,7 @@ def train(args, model, device, train_dataloader, eval_dataset, data_collator):
             outputs = model(**batch)
             loss = outputs['loss']
 
-            if args.n_gpu > 1:
+            if n_gpu > 1:
                 loss = loss.mean()
 
             loss.backward()
@@ -102,7 +109,7 @@ def train(args, model, device, train_dataloader, eval_dataset, data_collator):
                     torch.save(args, os.path.join(output_dir, 'training_args.bin'))
 
             if global_step % args.eval_steps == 0:
-                eval_loss = evaluate(args, model, eval_dataset, data_collator, device)
+                eval_loss = evaluate(args, model, eval_dataset, data_collator, device, n_gpu)
                 print("Eval loss at %d is %.2f" %(global_step, eval_loss))
 
 
@@ -140,14 +147,15 @@ if __name__ == "__main__":
         save_steps=500,
         save_total_limit=2,
         seed=1,
-        eval_steps=500
+        eval_steps=700
     )
     
+    n_gpu = 1   
     
 
     ## Asynch distributed training
     processes = []
-    procs = 2
+    procs = 4
     for rank in range(procs):
         
         model.share_memory()
@@ -160,15 +168,17 @@ if __name__ == "__main__":
                                       sampler=train_sampler,
                                       collate_fn=data_collator)
         
-        p = mp.Process(target=train, args=(args, model, device, train_dataloader, eval_dataset, data_collator))
+        p = mp.Process(target=train, args=(args, model, device, train_dataloader, eval_dataset, data_collator, rank, n_gpu))
         p.start()
         processes.append(p)
         
     for p in processes:
         p.join()
      
-    model.to(device)
-    evaluate(args, model, eval_dataset, data_collator, device)
+    final_loss = evaluate(args, model, eval_dataset, data_collator, device, n_gpu)
+    
+    print("Final eval loss: %.2f" %final_loss)
+    print("--- %s seconds ---" % (time.time() - start_time))
     
         
         

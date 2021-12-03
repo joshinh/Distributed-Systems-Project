@@ -14,12 +14,41 @@ from transformers import DataCollatorForLanguageModeling
 from transformers import Trainer, TrainingArguments
 from transformers import AdamW, get_linear_schedule_with_warmup
 from tqdm import trange, tqdm
-from torch.utils.data import RandomSampler, DataLoader, SequentialSampler
+from torch.utils.data import RandomSampler, DataLoader, SequentialSampler, DistributedSampler
 import torch
 import os
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("--local_rank", type=int)
+cargs = parser.parse_args()
 
+
+
+args = TrainingArguments(
+    output_dir="./mlm_roberta_tweeteval",
+    overwrite_output_dir=True,
+    num_train_epochs=20,
+    per_device_train_batch_size=32,
+    save_steps=500,
+    save_total_limit=2,
+    seed=1,
+    eval_steps=700
+)
+
+# For Disitributed training
+
+if cargs.local_rank == -1:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    args.n_gpu = torch.cuda.device_count()
+else:
+    torch.cuda.set_device(cargs.local_rank)
+    device = torch.device("cuda", cargs.local_rank)
+    #args.n_gpu = 1
+    
+if cargs.local_rank not in [-1, 0]:
+    torch.distributed.barrier()
+    
 tokenizer = RobertaTokenizer.from_pretrained('roberta-base')
 model = RobertaForMaskedLM.from_pretrained('roberta-base')
 
@@ -39,16 +68,10 @@ data_collator = DataCollatorForLanguageModeling(
     tokenizer=tokenizer, mlm=True, mlm_probability=0.15
 )
 
-args = TrainingArguments(
-    output_dir="./mlm_roberta_tweeteval",
-    overwrite_output_dir=True,
-    num_train_epochs=20,
-    per_device_train_batch_size=64,
-    save_steps=500,
-    save_total_limit=2,
-    seed=1,
-    eval_steps=500
-)
+if cargs.local_rank == 0:
+    torch.distributed.barrier()
+
+
 
 # trainer = Trainer(
 #     model=model,
@@ -60,6 +83,7 @@ args = TrainingArguments(
 
 def evaluate(args, model, eval_dataset):
     
+    eval_sampler = SequentialSampler(eval_dataset) if cargs.local_rank == -1 else DistributedSampler(eval_dataset, rank=cargs.local_rank)
     eval_dataloader = DataLoader(eval_dataset,
                                  batch_size=args.per_device_eval_batch_size,
                                  sampler=SequentialSampler(eval_dataset),
@@ -82,10 +106,11 @@ def evaluate(args, model, eval_dataset):
 ## Training loop
 
 print("Number of availabel GPUs: %d" %args.n_gpu)
+print("Process rank %d" %cargs.local_rank)
 
 train_batch_size = args.n_gpu * args.per_device_train_batch_size
 
-train_sampler = RandomSampler(train_dataset)
+train_sampler = RandomSampler(train_dataset) if cargs.local_rank == -1 else DistributedSampler(train_dataset, rank=cargs.local_rank)
 train_dataloader = DataLoader(train_dataset,
                               batch_size=train_batch_size,
                               sampler=train_sampler,
@@ -100,13 +125,15 @@ optimizer_grouped_parameters = [
 optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
 scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total)
 
+model.to(device)
 
 if args.n_gpu > 1:
     model = torch.nn.DataParallel(model)
     
-if args.local_rank != -1:
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank],
-                                                      output_device=args.local_rank,
+
+if cargs.local_rank != -1:
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[cargs.local_rank],
+                                                      output_device=cargs.local_rank,
                                                       find_unused_parameters=True)
 
 
@@ -116,12 +143,11 @@ print("  Num Epochs = %d" %args.num_train_epochs)
 print("  Instantaneous batch size per GPU = %d" %args.per_device_train_batch_size)
 print("  Total optimization steps = %d" %t_total)
 
-train_iterator = trange(int(args.num_train_epochs), desc="Epoch")
+train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=cargs.local_rank not in [-1, 0])
 global_step = 0
-model.to(device)
 
 for epoch in train_iterator:
-    epoch_iterator = tqdm(train_dataloader, desc="Iteration", position=0, leave=True)
+    epoch_iterator = tqdm(train_dataloader, desc="Iteration", position=0, leave=True, disable=cargs.local_rank not in [-1, 0])
     for step, batch in enumerate(epoch_iterator):
         batch.to(device)
         model.train()
@@ -138,19 +164,23 @@ for epoch in train_iterator:
         model.zero_grad()
         global_step += 1
         
-        if global_step % args.save_steps == 0:
+        if cargs.local_rank in [-1, 0] and global_step % args.save_steps == 0:
+            print("EXECUTED THIS")
             output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step))
             if not os.path.exists(output_dir):
                 os.makedirs(output_dir)
-                model.save_pretrained(output_dir)
+                model_to_save = model.module if hasattr(model, 'module') else model
+                model_to_save.save_pretrained(output_dir)
                 torch.save(args, os.path.join(output_dir, 'training_args.bin'))
                 
         if global_step % args.eval_steps == 0:
+            print("THIS TOO")
             eval_loss = evaluate(args, model, eval_dataset)
             print("Eval loss at %d is %.2f" %(global_step, eval_loss))
             
 final_loss = evaluate(args, model, eval_dataset)
 print("Final eval loss: %.2f" %final_loss)
+
 print("--- %s seconds ---" % (time.time() - start_time))
             
             

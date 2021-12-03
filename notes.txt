@@ -1,4 +1,33 @@
 
+2nd Decemeber
+
+1. Link for how synchronous training works - https://pytorch.org/docs/stable/notes/ddp.html
+2. TODO: Figure out why eval at end of training is incorrec for asynchronous training
+
+1st December
+
+Some intial results:
+
+1. MLM training on hate-speech detection: Perplixty ---
+
+Asynchornous : 
+a. 1 GPU, 2 proc, 32 batch size each: Eval loss = 356.05, Time = 1442.69 sec
+b. 1 GPU, 4 proc, 16 batch size each: Eval loss = 364.44, Time = 1530.95 sec
+c. 2 GPU, 2 proc, 32 batch size each: Eval loss = 252.46, 256.68, Time = 670.78 sec
+d. 3 GPU, 3 proc, 32 batch size each: Eval loss = 263.60, 274.92, 265.68, Time = 448.63 sec
+e. 4 GPU, 4 proc, 32 batch size each: Eval loss = 271.13, 276.38, 282.15, 277.05,Time = 340.29 sec 
+
+Synchronous (not really, it's just one process) : 
+a. 1 GPU, 32 batch size: Eval loss = 274.37, Time = 1294.008 sec
+b. 1 GPU, 64 batch size: Eval loss = 258.66, Time = 1259.63 sec
+c. 2 GPU, 64 total batch size: Eval loss = 248.02, Time = 1126.58 sec
+
+Synchronous :
+a. 2 GPU, 64 total batch size: Eval loss: 239.79, 256.04, Time = 819.22 sec
+b. 3 GPU, 96 total batch size: Eval loss: 248.08, 246.70, 251.14, TIme = 581.81 sec 
+c. 4 GPU, 32*4 total batch size: Eval loss: 254.05, 254.65, 263.18, 248.94, Time = 453.15 sec 
+
+
 17th Nov
 
 How can we simulate the pretrainig without requiring exorbitant amount of compute?
