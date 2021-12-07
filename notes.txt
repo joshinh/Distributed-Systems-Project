@@ -1,14 +1,47 @@
 
+6th December
+
+1. 2 GPU - [632.82, 266.64], [629.93, 265.21], [630.3, 271.52], [630.72, 273.38], [630.02, 269.57]
+2. 3 GPU - [409.46, 269.43], [410.85, 275.21], [410.79, 264.86], [410.74, 277.39], [409.55, 275.30]  
+3. 4 GPU - [290.86, 273.07], [290.91, 279.45], [291.11, 271.14], [291.24, 272.44], [290.99, 274.62] 
+
+
+Plot the learning curves (i.e. loss as training progresses)
+
+1. 2 GPU, 32 batch size on each - each tuple is (time, loss) after a fixed number of steps. loss is averaged in case of async training. 
+
+Synch: [99.89, 270.2], [185.28, 269.89], [271.04, 267.51], [357.07, 266.33], [443.08, 250.47], [529.06, 246.65], [615.09, 255.17] 
+Asynch: [73.23, 289.19], [142.05, 270.27], [211, 276.61], [280.04, 266.51], [348.92, 271.37], [417.80, 272.76], [486.73, 272.03], [555.31, 268.28], [624.31, 271.9]
+ 
+2. 3 GPU, 32 batch size on each 
+
+Synch: [75.57, 267.71], [138.42, 260.93], [200.26, 264.78], [262.11, 258.85], [323.80, 255.77], [385.56, 259.03], [447.43, 251.95], [508.94, 251.76], [596.98, 249.84]
+Asynch: [50.76, 288.56], [98.31, 277.06], [145.65, 278.63], [193.07, 270], [240.41, 275.27], [287.71, 271.75], [335.04, 272.1], [382.19, 271.41]
+
+
 2nd Decemeber
 
 1. Link for how synchronous training works - https://pytorch.org/docs/stable/notes/ddp.html
 2. TODO: Figure out why eval at end of training is incorrec for asynchronous training
 
+Results on the 'sentiment' section of the tweeteval dataset:
+
+Baseline:
+a. 1 GPU, 1 proc, 32 batch size: Eval loss = 498.35, Time = 2278.50 sec
+
+Asynchronous:
+a. 2 GPU, 2 proc, 32 batch size each: Eval loss = 529.83, 539.78, Time = 1139.34 sec
+b. 3 GPU, 3 proc, 32 batch size each: Eval loss = 536,75, 526.14, 522.83, Time = 804.73 sec
+
+Synchronous:
+a. 2 GPU, 32 batch size each: Eval loss = 490.39, 494.53, Time = 1518.54 sec 
+b. 3 GPU, 32 batch size each: Eval loss = 511.64, 500.06, 478.93, Time = 1099.09 sec
+
 1st December
 
 Some intial results:
 
-1. MLM training on hate-speech detection: Perplixty ---
+1. MLM training on hate-speech detection: 
 
 Asynchornous : 
 a. 1 GPU, 2 proc, 32 batch size each: Eval loss = 356.05, Time = 1442.69 sec
