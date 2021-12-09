@@ -17,7 +17,7 @@ from torch.utils.data import RandomSampler, DataLoader, SequentialSampler, Distr
 import torch
 import os
 import torch.multiprocessing as mp
-
+import argparse
 
 
 def evaluate(args, model, eval_dataset, data_collator, device, n_gpu):
@@ -48,6 +48,7 @@ def evaluate(args, model, eval_dataset, data_collator, device, n_gpu):
 def train(args, model, device, train_dataloader, eval_dataset, data_collator, rank, n_gpu):
 
     print("Number of availabel GPUs: %d" %n_gpu)
+    training_dynamics = []
     torch.cuda.set_device(rank)
 
     train_batch_size = n_gpu * args.per_device_train_batch_size
@@ -83,6 +84,10 @@ def train(args, model, device, train_dataloader, eval_dataset, data_collator, ra
     global_step = 0
     model.to(device)
 
+    eval_loss = evaluate(args, model, eval_dataset, data_collator, device, n_gpu)
+    print("Loss at %s is %.2f" %(time.time() - start_time, eval_loss))
+    training_dynamics.append([round(time.time() - start_time, 2), round(eval_loss,2)])
+
     for epoch in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", position=0, leave=True)
         for step, batch in enumerate(epoch_iterator):
@@ -111,10 +116,20 @@ def train(args, model, device, train_dataloader, eval_dataset, data_collator, ra
             if global_step % args.eval_steps == 0:
                 eval_loss = evaluate(args, model, eval_dataset, data_collator, device, n_gpu)
                 print("Eval loss at %d is %.2f" %(global_step, eval_loss))
+                print("--- %s seconds ---" % (time.time() - start_time))
+                training_dynamics.append([round(time.time() - start_time, 2), round(eval_loss,2)])
+    
+    print("Training dynamics", training_dynamics) 
 
 
 
 if __name__ == "__main__":
+    
+    parser = argparse.ArgumentParser(
+            description="Run asynchronous training"
+    )
+    parser.add_argument("--n_procs", type=int, default=1, help="Number of GPUs/asynchronous processes")
+    cargs = parser.parse_args()
     
     mp.set_start_method('spawn')
     
@@ -140,14 +155,14 @@ if __name__ == "__main__":
     )
 
     args = TrainingArguments(
-        output_dir="./mlm_roberta_tweeteval",
+        output_dir="./mlm_roberta_hate",
         overwrite_output_dir=True,
         num_train_epochs=20,
         per_device_train_batch_size=32,
         save_steps=500,
         save_total_limit=2,
         seed=1,
-        eval_steps=700
+        eval_steps=200
     )
     
     n_gpu = 1   
@@ -155,7 +170,7 @@ if __name__ == "__main__":
 
     ## Asynch distributed training
     processes = []
-    procs = 4
+    procs = cargs.n_procs
     for rank in range(procs):
         
         model.share_memory()

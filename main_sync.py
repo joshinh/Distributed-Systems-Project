@@ -26,14 +26,14 @@ cargs = parser.parse_args()
 
 
 args = TrainingArguments(
-    output_dir="./mlm_roberta_tweeteval",
+    output_dir="./mlm_roberta_hate",
     overwrite_output_dir=True,
     num_train_epochs=20,
     per_device_train_batch_size=32,
     save_steps=500,
     save_total_limit=2,
     seed=1,
-    eval_steps=700
+    eval_steps=200
 )
 
 # For Disitributed training
@@ -83,7 +83,8 @@ if cargs.local_rank == 0:
 
 def evaluate(args, model, eval_dataset):
     
-    eval_sampler = SequentialSampler(eval_dataset) if cargs.local_rank == -1 else DistributedSampler(eval_dataset, rank=cargs.local_rank)
+    model.eval()
+    eval_sampler = SequentialSampler(eval_dataset) if cargs.local_rank in [-1,0] else DistributedSampler(eval_dataset, rank=cargs.local_rank)
     eval_dataloader = DataLoader(eval_dataset,
                                  batch_size=args.per_device_eval_batch_size,
                                  sampler=SequentialSampler(eval_dataset),
@@ -146,6 +147,18 @@ print("  Total optimization steps = %d" %t_total)
 train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=cargs.local_rank not in [-1, 0])
 global_step = 0
 
+training_dynamics = []
+
+if cargs.local_rank not in [-1, 0]:
+    torch.distributed.barrier()
+if cargs.local_rank == 0:
+    eval_loss = evaluate(args, model.module, eval_dataset)
+    print("Eval loss at %d is %.2f" %(global_step, eval_loss))
+    print("--- %s seconds ---" % (time.time() - start_time))
+    training_dynamics.append([round(time.time() - start_time, 2), round(eval_loss, 2)])
+    torch.distributed.barrier()
+
+
 for epoch in train_iterator:
     epoch_iterator = tqdm(train_dataloader, desc="Iteration", position=0, leave=True, disable=cargs.local_rank not in [-1, 0])
     for step, batch in enumerate(epoch_iterator):
@@ -165,7 +178,6 @@ for epoch in train_iterator:
         global_step += 1
         
         if cargs.local_rank in [-1, 0] and global_step % args.save_steps == 0:
-            print("EXECUTED THIS")
             output_dir = os.path.join(args.output_dir, 'checkpoint-{}'.format(global_step))
             if not os.path.exists(output_dir):
                 os.makedirs(output_dir)
@@ -174,13 +186,21 @@ for epoch in train_iterator:
                 torch.save(args, os.path.join(output_dir, 'training_args.bin'))
                 
         if global_step % args.eval_steps == 0:
-            print("THIS TOO")
-            eval_loss = evaluate(args, model, eval_dataset)
-            print("Eval loss at %d is %.2f" %(global_step, eval_loss))
-            
+            if cargs.local_rank not in [-1, 0]:
+                torch.distributed.barrier()
+            if cargs.local_rank == 0:
+                eval_loss = evaluate(args, model.module, eval_dataset)
+                print("Eval loss at %d is %.2f" %(global_step, eval_loss))
+                print("--- %s seconds ---" % (time.time() - start_time))
+                training_dynamics.append([round(time.time() - start_time, 2), round(eval_loss, 2)])
+                torch.distributed.barrier()
+
+if cargs.local_rank == 0:
+    print("Training Dynamics", training_dynamics)
+
+
 final_loss = evaluate(args, model, eval_dataset)
 print("Final eval loss: %.2f" %final_loss)
-
 print("--- %s seconds ---" % (time.time() - start_time))
             
             
